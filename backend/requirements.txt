@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+qdrant-client
+minio
+python-multipart
+tiktoken
+pillow
+easyocr
+openai
+pydantic==1.*
