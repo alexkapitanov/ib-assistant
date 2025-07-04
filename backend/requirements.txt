@@ -2,9 +2,13 @@ fastapi
 uvicorn[standard]
 qdrant-client
 minio
+boto3
 python-multipart
 tiktoken
 pillow
 easyocr
-openai
+openai==0.28.1
 pydantic==1.*
+pdfplumber
+ffmpeg-python
+whisper-openai
