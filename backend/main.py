@@ -3,8 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi import Request
 from backend.models import AskRequest, AskResponse
-import openai
 from backend.pipeline import search_vectors
+from backend.openai_helpers import clarify_question, get_embedding
 
 app = FastAPI()
 
@@ -24,16 +24,12 @@ def healthz():
 async def ask(request: Request):
     data = await request.json()
     req = AskRequest(**data)
-    # Получаем embedding через OpenAI
-    embedding_response = openai.Embedding.create(
-        model="text-embedding-3-large",
-        input=req.question
-    )
-    embedding = embedding_response["data"][0]["embedding"]
-    # Поиск фрагментов
-    results = search_vectors(embedding, top_k=20)
-    answer = f"Найдено {len(results)} фрагментов"
-    return AskResponse(answer=answer)
+    result = clarify_question(req.question)
+    if "follow_up" in result:
+        return AskResponse(answer=result["follow_up"])
+    embedding = get_embedding(result["search_query"])
+    hits = search_vectors(embedding)
+    return AskResponse(answer=f"Найдено {len(hits)} релевантных фрагментов")
 
 if __name__ == "__main__":
     import uvicorn
