@@ -2,12 +2,16 @@ from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi import Request
-from models import AskRequest, AskResponse
-from pipeline import search_vectors
-from openai_helpers import clarify_question, get_embedding, rerank_chunks
+from backend.models import AskRequest, AskResponse
+from backend.pipeline import search_vectors
+from backend.openai_helpers import clarify_question, get_embedding, rerank_chunks
 from uuid import uuid4
-from ingest import ingest_file
+from backend.ingest import ingest_file, ensure_minio_bucket
+from backend.qdrant_utils import ensure_collection, get_client, COLLECTION
+from qdrant_client import QdrantClient
 import boto3, os
+from pydantic import BaseModel
+from backend.embedding import embed_text
 
 app = FastAPI()
 
@@ -58,6 +62,8 @@ async def upload(file: UploadFile = File(...)):
     with open(tmp_path, "wb") as f:
         f.write(await file.read())
 
+    # гарантируем, что bucket существует
+    ensure_minio_bucket("ib-files")
     # кладём в MinIO (bucket ib-files должен существовать)
     minio.upload_file(tmp_path, "ib-files", f"{file_id}.{ext}")
 
@@ -65,3 +71,36 @@ async def upload(file: UploadFile = File(...)):
     ingest_file(tmp_path, ext, file_id)
 
     return {"status": "uploaded", "file_id": file_id, "chunks_indexed": "done"}
+
+@app.on_event("startup")
+def startup_event():
+    """Инициализация коллекции Qdrant при старте приложения."""
+    client = QdrantClient(host=os.getenv("QDRANT_HOST", "qdrant"), port=6333)
+    ensure_collection(client)
+
+class SearchRequest(BaseModel):
+    query: str
+    top_k: int = 80  # значение по умолчанию
+
+class SearchHit(BaseModel):
+    id: str
+    score: float
+    payload: dict
+
+@app.post("/search", response_model=list[SearchHit])
+def search(req: SearchRequest):
+    """
+    Поиск по коллекции docs в Qdrant по эмбеддингу запроса.
+    Возвращает до 80 результатов по умолчанию (top_k).
+    """
+    vec = embed_text(req.query)
+    client = get_client()
+    hits = client.search(
+        collection_name="docs",
+        query_vector=vec,
+        limit=req.top_k,
+    )
+    return [
+        SearchHit(id=str(h.id), score=h.score, payload=h.payload)
+        for h in hits
+    ]

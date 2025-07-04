@@ -59,5 +59,27 @@ def search_vectors(query_vector: List[float], top_k: int = 20) -> List[Dict[str,
         for hit in hits
     ]
 
+
+def ensure_qdrant_collection(collection_name: str = "ib-assistant", vector_size: int = 1536):
+    """Создаёт коллекцию в Qdrant, если её нет."""
+    global qdrant
+    if qdrant is None:
+        raise RuntimeError("Qdrant client is not initialized")
+    collections = [c.name for c in qdrant.get_collections().collections]
+    if collection_name not in collections:
+        qdrant.recreate_collection(
+            collection_name=collection_name,
+            vectors_config={
+                "default": {
+                    "size": vector_size,
+                    "distance": "Cosine"
+                }
+            },
+        )
+        print(f"[Qdrant] Collection '{collection_name}' created ✔")
+    else:
+        print(f"[Qdrant] Collection '{collection_name}' exists")
+
+
 # Инициализация клиентов при импорте модуля
 init_clients()

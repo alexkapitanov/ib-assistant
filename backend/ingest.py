@@ -4,11 +4,32 @@ import pdfplumber
 from PIL import Image
 import easyocr
 from whisper import load_model as load_whisper
-from backend.openai_helpers import get_embedding
-from backend.pipeline import qdrant_client
+from backend.embedding import embed_text, EMBED_DIM
+from backend.pipeline import qdrant
+import boto3, os, botocore
+from qdrant_client import QdrantClient, models
+from backend.qdrant_utils import get_client, COLLECTION
 
 reader = easyocr.Reader(["en", "ru"], gpu=False)
 whisper_model = load_whisper("base")
+
+def ensure_minio_bucket(bucket_name: str = "ib-files"):
+    """Создаёт bucket в MinIO, если его ещё нет (идемпотентно)."""
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=os.getenv("MINIO_ENDPOINT", "http://minio:9000"),
+        aws_access_key_id=os.getenv("MINIO_ROOT_USER", "minio"),
+        aws_secret_access_key=os.getenv("MINIO_ROOT_PASSWORD", "minio123"),
+    )
+    try:
+        s3.head_bucket(Bucket=bucket_name)
+        print(f"[MinIO] bucket '{bucket_name}' ok")
+    except botocore.exceptions.ClientError as e:
+        if e.response["Error"]["Code"] == "404":
+            s3.create_bucket(Bucket=bucket_name)
+            print(f"[MinIO] bucket '{bucket_name}' created ✔")
+        else:
+            raise
 
 def chunk_text(text: str, max_len: int = 256) -> List[str]:
     """Режем текст на куски ≈256 токенов (простое деление по предложениям)."""
@@ -54,24 +75,20 @@ def process_video(path: str) -> List[str]:
         return chunks
 
 def ingest_file(path: str, filetype: str, file_id: str):
-    """Создаёт эмбеддинги и кладёт их в Qdrant."""
+    """Создаёт эмбеддинги и кладёт их в Qdrant (docs)."""
     match filetype:
         case "pdf": chunks = process_pdf(path)
         case "png" | "jpg" | "jpeg": chunks = process_image(path)
         case "mp4" | "mov": chunks = process_video(path)
         case _: return
-    vectors = []
+    client = get_client()
+    points = []
     for idx, chunk in enumerate(chunks):
-        emb = get_embedding(chunk)
-        vectors.append(
-            {
-                "id": f"{file_id}_{idx}",
-                "vector": emb,
-                "payload": {"text": chunk, "file_id": file_id, "index": idx},
-            }
+        vector = embed_text(chunk)
+        point_id = str(uuid.uuid4())
+        payload = {"text": chunk, "file_id": file_id, "index": idx}
+        points.append(
+            models.PointStruct(id=point_id, vector=vector, payload=payload)
         )
-    if vectors:
-        qdrant_client.upsert(
-            collection_name="ib-assistant",
-            points=vectors,
-        )
+    if points:
+        client.upsert(collection_name=COLLECTION, wait=True, points=points)
