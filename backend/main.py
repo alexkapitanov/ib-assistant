@@ -2,9 +2,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi import Request
-from backend.models import AskRequest, AskResponse
-from backend.pipeline import search_vectors
-from backend.openai_helpers import clarify_question, get_embedding, rerank_chunks
+from models import AskRequest, AskResponse
+from pipeline import search_vectors
+from openai_helpers import clarify_question, get_embedding, rerank_chunks
 
 app = FastAPI()
 
@@ -36,7 +36,3 @@ async def ask(request: Request):
         if top else "Фрагментов не найдено"
     )
     return AskResponse(answer=answer)
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
